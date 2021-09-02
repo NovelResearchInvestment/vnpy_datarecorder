@@ -133,26 +133,27 @@ class DataRecorderEngine(BaseEngine):
 
                 if task_type == "tick":
                     self.database_manager.save_tick_data(data)
-                    # self.write_log(data)
+                    self.write_log(data)
                 elif task_type == "bar":
-                    # self.database_manager.save_bar_data(data)
+                    self.database_manager.save_bar_data(data)
                     self.write_log(data)
                 elif task_type == "order":
                     self.database_manager.save_order_data(data)
                     self.write_log(data)
                 elif task_type == "trade":
-                    # self.database_manager.save_trade_data(data)
+                    self.database_manager.save_trade_data(data)
                     self.write_log(data)
                 elif task_type == "position":
-                    # self.database_manager.save_position_data(data)
+                    self.database_manager.save_position_data(data)
                     self.write_log(data)
                 elif task_type == "account":
-                    # self.database_manager.save_account_data(data)
+                    self.database_manager.save_account_data(data)
                     self.write_log(data)
                 else:
                     raise ValueError(f"unknown task_type: {task_type}")
 
             except Empty:
+                print()
                 self.write_log(f"Thread queue is waiting...[{self.queue.qsize()}, {self.active}, {self.thread.is_alive()}, {self.thread._is_stopped}]")
                 continue
                 # if self.active and self.thread.is_alive():
@@ -176,20 +177,6 @@ class DataRecorderEngine(BaseEngine):
 
     def start(self):
         """"""
-        for task_type, data in self.data_setting.items():
-            if task_type == 'tick':
-                for vt_symbol, target_value in data.items():
-                    print(task_type, vt_symbol, target_value)
-                    self.add_tick_recording(vt_symbol)
-            elif task_type == 'bar':
-                for vt_symbol, target_value in data.items():
-                    print(task_type, vt_symbol, target_value)
-                    self.add_bar_recording(vt_symbol)
-            elif task_type in ['order', 'trade', 'position', 'account', 'default']:
-                pass
-            else:
-                raise ValueError(f"unknown task_type {task_type}")
-
         self.active = True
         if self.thread.isAlive():
             self.thread.start()
@@ -440,4 +427,3 @@ class DataRecorderEngine(BaseEngine):
         )
         self.write_log(f"发出订阅 {contract.vt_symbol} 请求")
         self.main_engine.subscribe(req, contract.gateway_name)
-
