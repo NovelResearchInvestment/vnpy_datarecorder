@@ -63,7 +63,7 @@ class DataRecorderEngine(BaseEngine):
         """"""
         super().__init__(main_engine, event_engine, APP_NAME)
 
-        self.setting_filename = self.main_engine.global_setting['data_recorder_setting.file']
+        self.data_recorder_setting = self.main_engine.global_setting['data_recorder_setting.file']
 
         self.queue = Queue()
         self.thread = Thread(target=self.run)
@@ -87,24 +87,29 @@ class DataRecorderEngine(BaseEngine):
         # driver = self.main_engine.global_setting['database.driver']
         # self.database_manager = importlib.import_module(f"vnpy.database.{driver}").database_manager
 
+        module_name = self.main_engine.global_setting['database.module']
         driver = self.main_engine.global_setting['database.driver']
-        module_name = f"vnpy.database.{driver}"
+
         try:
-            self.database_manager: BaseDatabase = importlib.import_module(module_name).database_manager
+            # database_module: BaseDatabase = importlib.import_module(f"vnpy_{driver}.{driver}_database")
+            # self.database_manager = eval(f"database_module.{driver.capitalize()}Database")
+            self.database_manager = importlib.import_module(f"vnpy_{driver}.{driver}_database").database_manager
         except ModuleNotFoundError:
             print(f"找不到数据库驱动{module_name}，使用默认的SQLite数据库")
             self.database_manager: BaseDatabase = importlib.import_module("vnpy.database.sqlite").database_manager
 
-        # self.load_setting()
-        # self.register_event()
-        # self.start()
-        # self.put_event()
+        self.load_setting()
+        self.register_event()
+        self.start()
+        self.put_event()
 
     def load_setting(self):
         """"""
-        self.data_setting = load_json(self.setting_filename)
-        # self.tick_recordings = setting.get("tick", {})
-        # self.bar_recordings = setting.get("bar", {})
+        self.data_setting = load_json(self.data_recorder_setting)
+        self.tick_recordings = self.data_setting.get("tick", {})
+        self.bar_recordings = self.data_setting.get("bar", {})
+        self.data_setting.get("location", "")
+
 
     def save_setting(self):
         """"""
@@ -128,27 +133,26 @@ class DataRecorderEngine(BaseEngine):
 
                 if task_type == "tick":
                     self.database_manager.save_tick_data(data)
-                    self.write_log(data)
+                    # self.write_log(data)
                 elif task_type == "bar":
-                    self.database_manager.save_bar_data(data)
+                    # self.database_manager.save_bar_data(data)
                     self.write_log(data)
                 elif task_type == "order":
                     self.database_manager.save_order_data(data)
                     self.write_log(data)
                 elif task_type == "trade":
-                    self.database_manager.save_trade_data(data)
+                    # self.database_manager.save_trade_data(data)
                     self.write_log(data)
                 elif task_type == "position":
-                    self.database_manager.save_position_data(data)
+                    # self.database_manager.save_position_data(data)
                     self.write_log(data)
                 elif task_type == "account":
-                    self.database_manager.save_account_data(data)
+                    # self.database_manager.save_account_data(data)
                     self.write_log(data)
                 else:
                     raise ValueError(f"unknown task_type: {task_type}")
 
             except Empty:
-                print()
                 self.write_log(f"Thread queue is waiting...[{self.queue.qsize()}, {self.active}, {self.thread.is_alive()}, {self.thread._is_stopped}]")
                 continue
                 # if self.active and self.thread.is_alive():
@@ -172,6 +176,20 @@ class DataRecorderEngine(BaseEngine):
 
     def start(self):
         """"""
+        for task_type, data in self.data_setting.items():
+            if task_type == 'tick':
+                for vt_symbol, target_value in data.items():
+                    print(task_type, vt_symbol, target_value)
+                    self.add_tick_recording(vt_symbol)
+            elif task_type == 'bar':
+                for vt_symbol, target_value in data.items():
+                    print(task_type, vt_symbol, target_value)
+                    self.add_bar_recording(vt_symbol)
+            elif task_type in ['order', 'trade', 'position', 'account', 'default']:
+                pass
+            else:
+                raise ValueError(f"unknown task_type {task_type}")
+
         self.active = True
         if self.thread.isAlive():
             self.thread.start()
