@@ -106,9 +106,9 @@ class DataRecorderEngine(BaseEngine):
     def load_setting(self):
         """"""
         self.data_setting = load_json(self.data_recorder_setting)
-        self.tick_recordings = self.data_setting.get("tick", {})
-        self.bar_recordings = self.data_setting.get("bar", {})
-        self.data_setting.get("location", "")
+        # self.tick_recordings = self.data_setting.get("tick", {})
+        # self.bar_recordings = self.data_setting.get("bar", {})
+        # self.data_setting.get("location", "")
 
 
     def save_setting(self):
@@ -117,7 +117,7 @@ class DataRecorderEngine(BaseEngine):
             "tick": self.tick_recordings,
             "bar": self.bar_recordings
         }
-        save_json(self.setting_filename + '.cache', setting)
+        save_json(self.data_recorder_setting + '.cache', setting)
 
     def run(self):
         """"""
@@ -177,6 +177,20 @@ class DataRecorderEngine(BaseEngine):
 
     def start(self):
         """"""
+        for task_type, data in self.data_setting.items():
+            if task_type == 'tick':
+                for vt_symbol, target_value in data.items():
+                    # print(task_type, vt_symbol, target_value)
+                    self.add_tick_recording(vt_symbol)
+            elif task_type == 'bar':
+                for vt_symbol, target_value in data.items():
+                    # print(task_type, vt_symbol, target_value)
+                    self.add_bar_recording(vt_symbol)
+            elif task_type in ['order', 'trade', 'position', 'account', 'default']:
+                pass
+            else:
+                raise ValueError(f"unknown task_type {task_type}")
+
         self.active = True
         if self.thread.isAlive():
             self.thread.start()
