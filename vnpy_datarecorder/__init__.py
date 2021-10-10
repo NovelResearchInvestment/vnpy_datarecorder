@@ -23,25 +23,36 @@
 
 from pathlib import Path
 
-import importlib_metadata
 from vnpy.trader.app import BaseApp
+from vnpy.trader.constant import Direction
+from vnpy.trader.object import TickData, BarData, TradeData, OrderData
+from vnpy.trader.utility import BarGenerator, ArrayManager
 
-from .engine import RecorderEngine, APP_NAME
-
-
-try:
-    __version__ = importlib_metadata.version("vnpy_datarecorder")
-except importlib_metadata.PackageNotFoundError:
-    __version__ = "dev"
+from .base import APP_NAME, StopOrder
+from .engine import DataRecorderEngine
+from .template import DataTemplate
 
 
 class DataRecorderApp(BaseApp):
     """"""
 
-    app_name: str = APP_NAME
-    app_module: str = __module__
-    app_path: Path = Path(__file__).parent
-    display_name: str = "行情记录"
-    engine_class: RecorderEngine = RecorderEngine
-    widget_name: str = "RecorderManager"
-    icon_name: str = "recorder.ico"
+    app_name = APP_NAME
+    app_module = __module__
+    app_path = Path(__file__).parent
+    display_name = "DataRecorder"
+    engine_class = DataRecorderEngine
+    widget_name = "DataRecorderManager"
+    icon_name = "datarecorder.ico"
+
+
+
+# class AccountRecorderApp(BaseApp):
+#     """"""
+#
+#     app_name = "AccountRecorder"
+#     app_module = __module__
+#     app_path = Path(__file__).parent
+#     display_name = "AccountRecorder"
+#     engine_class = AccountRecorderEngine
+#     widget_name = "AccountRecorderManager"
+#     icon_name = "accountrecorder.ico"

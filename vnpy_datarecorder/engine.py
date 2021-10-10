@@ -1,24 +1,58 @@
-import sys
+""""""
+import threading
+import traceback
+import importlib
+import os, sys
 from threading import Thread
 from queue import Queue, Empty
 from copy import copy
+
 from collections import defaultdict
-from typing import Any, Dict, List
+from pathlib import Path
+from typing import Any, Callable
+from datetime import datetime, timedelta
+from concurrent.futures import ThreadPoolExecutor
+from copy import copy
+from tzlocal import get_localzone
+from glob import glob
 
 from vnpy.event import Event, EventEngine
 from vnpy.trader.engine import BaseEngine, MainEngine
+# from vnpy.trader.database import database_manager
+from vnpy.trader.database import BaseDatabase
 from vnpy.trader.constant import Exchange
 from vnpy.trader.object import (
+    OrderRequest,
     SubscribeRequest,
+    HistoryRequest,
+    LogData,
     TickData,
     BarData,
+    OrderData,
+    TradeData,
+    PositionData,
+    AccountData,
     ContractData
 )
-from vnpy.trader.event import EVENT_TICK, EVENT_CONTRACT, EVENT_TIMER
-from vnpy.trader.utility import load_json, save_json, BarGenerator
-from vnpy.trader.database import BaseDatabase, get_database
-from vnpy_spreadtrading.base import EVENT_SPREAD_DATA, SpreadData
 
+from vnpy.trader.event import (
+    EVENT_TIMER, EVENT_TICK, EVENT_CONTRACT,
+    EVENT_POSITION, EVENT_ORDER, EVENT_TRADE
+)
+from vnpy.trader.utility import load_json, save_json, BarGenerator
+from vnpy.trader.converter import OffsetConverter
+
+from vnpy.trader.constant import Direction, Offset, OrderType, Interval
+
+from .base import (
+    APP_NAME,
+    EVENT_RECORDER_LOG,
+    EVENT_RECORDER_UPDATE,
+    EVENT_RECORDER_EXCEPTION,
+    EngineType,
+    StopOrder,
+)
+from .template import DataTemplate
 
 APP_NAME: str = "DataRecorder"
 
@@ -27,87 +61,150 @@ EVENT_RECORDER_UPDATE: str = "eRecorderUpdate"
 EVENT_RECORDER_EXCEPTION: str = "eRecorderException"
 
 
-class RecorderEngine(BaseEngine):
+class DataRecorderEngine(BaseEngine):
     """
     For running data recorder.
     """
 
-    setting_filename: str = "data_recorder_setting.json"
+    # setting_filename = "data_recorder_setting.json"
 
-    def __init__(self, main_engine: MainEngine, event_engine: EventEngine) -> None:
+    def __init__(self, main_engine: MainEngine, event_engine: EventEngine):
         """"""
         super().__init__(main_engine, event_engine, APP_NAME)
 
-        self.queue: Queue = Queue()
-        self.thread: Thread = Thread(target=self.run)
-        self.active: bool = False
+        self.data_recorder_setting = self.main_engine.global_setting['data_recorder_setting.file']
+
+        self.queue = Queue()
+        self.thread = Thread(target=self.run)
+
+        self.active = False
 
         self.tick_recordings: Dict[str, Dict] = {}
         self.bar_recordings: Dict[str, Dict] = {}
         self.bar_generators: Dict[str, BarGenerator] = {}
 
-        self.timer_count: int = 0
-        self.timer_interval: int = 10
+        self.timer_count = 0
+        self.timer_interval = 10
 
         self.ticks: Dict[str, List[TickData]] = defaultdict(list)
         self.bars: Dict[str, List[BarData]] = defaultdict(list)
+        self.orders = defaultdict(list)
+        self.trades = defaultdict(list)
+        self.positions = defaultdict(list)
+        self.accounts = defaultdict(list)
 
-        self.database: BaseDatabase = get_database()
+        # driver = self.main_engine.global_setting['database.driver']
+        # self.database_manager = importlib.import_module(f"vnpy.database.{driver}").database_manager
+
+        module_name = self.main_engine.global_setting['database.module']
+        driver = self.main_engine.global_setting['database.driver']
+
+        try:
+            # database_module: BaseDatabase = importlib.import_module(f"vnpy_{driver}.{driver}_database")
+            # self.database_manager = eval(f"database_module.{driver.capitalize()}Database")
+            self.database_manager = importlib.import_module(f"vnpy_{driver}.{driver}_database").database_manager
+        except ModuleNotFoundError:
+            print(f"找不到数据库驱动{module_name}，使用默认的SQLite数据库")
+            self.database_manager: BaseDatabase = importlib.import_module("vnpy.database.sqlite").database_manager
 
         self.load_setting()
         self.register_event()
         self.start()
         self.put_event()
 
-    def load_setting(self) -> None:
+    def load_setting(self):
         """"""
-        setting: dict = load_json(self.setting_filename)
-        self.tick_recordings = setting.get("tick", {})
-        self.bar_recordings = setting.get("bar", {})
+        self.data_setting = load_json(self.data_recorder_setting)
+        # self.tick_recordings = self.data_setting.get("tick", {})
+        # self.bar_recordings = self.data_setting.get("bar", {})
+        # self.data_setting.get("location", "")
 
-    def save_setting(self) -> None:
+
+    def save_setting(self):
         """"""
-        setting: dict = {
+        setting = {
             "tick": self.tick_recordings,
             "bar": self.bar_recordings
         }
-        save_json(self.setting_filename, setting)
+        save_json(self.data_recorder_setting + '.cache', setting)
 
-    def run(self) -> None:
+    def run(self):
         """"""
         while self.active:
             try:
-                task: Any = self.queue.get(timeout=1)
+                task = self.queue.get(timeout=1)
                 task_type, data = task
 
+                try:
+                    self.write_log(data)
+                except Exception as e:
+                    print(e)
+
                 if task_type == "tick":
-                    self.database.save_tick_data(data)
+                    self.database_manager.save_tick_data(data)
+                    self.write_log(data)
                 elif task_type == "bar":
-                    self.database.save_bar_data(data)
+                    self.database_manager.save_bar_data(data)
+                    self.write_log(data)
+                elif task_type == "order":
+                    self.database_manager.save_order_data(data)
+                    self.write_log(data)
+                elif task_type == "trade":
+                    self.database_manager.save_trade_data(data)
+                    self.write_log(data)
+                elif task_type == "position":
+                    self.database_manager.save_position_data(data)
+                    self.write_log(data)
+                elif task_type == "account":
+                    self.database_manager.save_account_data(data)
+                    self.write_log(data)
+                else:
+                    raise ValueError(f"unknown task_type: {task_type}")
 
             except Empty:
+                print()
+                self.write_log(f"Thread queue is waiting...[{self.queue.qsize()}, {self.active}, {self.thread.is_alive()}, {self.thread._is_stopped}]")
                 continue
+                # if self.active and self.thread.is_alive():
+                #     continue
+                # else:
+                #     raise Exception("engine thread is not alive.")
 
-            except Exception:
+            except Exception as e:
+                print(e)
                 self.active = False
-
                 info = sys.exc_info()
-                event: Event = Event(EVENT_RECORDER_EXCEPTION, info)
+                event = Event(EVENT_RECORDER_EXCEPTION, info)
                 self.event_engine.put(event)
 
-    def close(self) -> None:
+    def close(self):
         """"""
         self.active = False
 
         if self.thread.isAlive():
             self.thread.join()
 
-    def start(self) -> None:
+    def start(self):
         """"""
-        self.active = True
-        self.thread.start()
+        for task_type, data in self.data_setting.items():
+            if task_type == 'tick':
+                for vt_symbol, target_value in data.items():
+                    # print(task_type, vt_symbol, target_value)
+                    self.add_tick_recording(vt_symbol)
+            elif task_type == 'bar':
+                for vt_symbol, target_value in data.items():
+                    # print(task_type, vt_symbol, target_value)
+                    self.add_bar_recording(vt_symbol)
+            elif task_type in ['order', 'trade', 'position', 'account', 'default']:
+                pass
+            else:
+                raise ValueError(f"unknown task_type {task_type}")
 
-    def add_bar_recording(self, vt_symbol: str) -> None:
+        self.active = True
+        if self.thread.isAlive():
+            self.thread.start()
+
+    def add_bar_recording(self, vt_symbol: str):
         """"""
         if vt_symbol in self.bar_recordings:
             self.write_log(f"已在K线记录列表中：{vt_symbol}")
@@ -187,14 +284,26 @@ class RecorderEngine(BaseEngine):
 
         self.write_log(f"移除Tick记录成功：{vt_symbol}")
 
-    def register_event(self) -> None:
+    def register_event(self, events: list = [EVENT_TICK, EVENT_CONTRACT, EVENT_ORDER, EVENT_TRADE, EVENT_POSITION]):
         """"""
         self.event_engine.register(EVENT_TIMER, self.process_timer_event)
-        self.event_engine.register(EVENT_TICK, self.process_tick_event)
-        self.event_engine.register(EVENT_CONTRACT, self.process_contract_event)
-        self.event_engine.register(EVENT_SPREAD_DATA, self.process_spread_event)
 
-    def update_tick(self, tick: TickData) -> None:
+        if EVENT_TICK in events:
+            self.event_engine.register(EVENT_TICK, self.process_tick_event)
+
+        if EVENT_CONTRACT in events:
+            self.event_engine.register(EVENT_CONTRACT, self.process_contract_event)
+
+        if EVENT_ORDER in events:
+            self.event_engine.register(EVENT_ORDER, self.process_order_event)
+
+        if EVENT_TRADE in events:
+            self.event_engine.register(EVENT_TRADE, self.process_trade_event)
+
+        if EVENT_POSITION in events:
+            self.event_engine.register(EVENT_POSITION, self.process_position_event)
+
+    def update_tick(self, tick: TickData):
         """"""
         if tick.vt_symbol in self.tick_recordings:
             self.record_tick(copy(tick))
@@ -218,6 +327,24 @@ class RecorderEngine(BaseEngine):
             self.queue.put(("tick", ticks))
         self.ticks.clear()
 
+        for orders in self.orders.values():
+            self.queue.put(("order", orders))
+        self.orders.clear()
+
+        for trades in self.trades.values():
+            self.queue.put(("trade", trades))
+        self.trades.clear()
+
+        for positions in self.positions.values():
+            self.write_log(f"position: {len(self.positions.values())}")
+            self.queue.put(("position", positions))
+        self.positions.clear()
+
+        for accounts in self.accounts.values():
+            self.write_log(f"accounts: {len(self.accounts.values())}")
+            self.queue.put(("account", accounts))
+        self.accounts.clear()
+
     def process_tick_event(self, event: Event) -> None:
         """"""
         tick: TickData = event.data
@@ -231,6 +358,28 @@ class RecorderEngine(BaseEngine):
         if (vt_symbol in self.tick_recordings or vt_symbol in self.bar_recordings):
             self.subscribe(contract)
 
+    def process_order_event(self, event: Event):
+        """"""
+        order = event.data
+        self.record_order(copy(order))
+
+    def process_trade_event(self, event: Event):
+        """"""
+        trade = event.data
+        self.record_trade(copy(trade))
+
+    def process_position_event(self, event: Event):
+        """"""
+        position = event.data
+        self.record_position(copy(position))
+
+    def process_account_event(self, event: Event):
+        """
+        收到账户事件推送
+        """
+        account = event.data
+        self.record_account(copy(account))
+
     def process_spread_event(self, event: Event) -> None:
         """"""
         spread: SpreadData = event.data
@@ -240,12 +389,15 @@ class RecorderEngine(BaseEngine):
         if tick.datetime:
             self.update_tick(tick)
 
-    def write_log(self, msg: str) -> None:
-        """"""
-        event: Event = Event(
-            EVENT_RECORDER_LOG,
-            msg
-        )
+    def write_log(self, msg: str, strategy: DataTemplate = None):
+        """
+        Create engine log event.
+        """
+        if strategy:
+            msg = f"[{strategy.strategy_name}]  {msg}"
+
+        log = LogData(msg=msg, gateway_name=APP_NAME)
+        event = Event(type=EVENT_RECORDER_LOG, data=log)
         self.event_engine.put(event)
 
     def put_event(self) -> None:
@@ -275,6 +427,19 @@ class RecorderEngine(BaseEngine):
         """"""
         self.bars[bar.vt_symbol].append(bar)
 
+    def record_order(self, order: OrderData):
+        self.orders[order.vt_symbol].append(order)
+
+    def record_trade(self, trade: TradeData):
+        self.trades[trade.vt_symbol].append(trade)
+
+    def record_position(self, position: PositionData):
+        self.positions[position.vt_symbol].append(position)
+
+    def record_account(self, account: AccountData):
+        self.accounts[account.vt_symbol].append(account)
+
+
     def get_bar_generator(self, vt_symbol: str) -> BarGenerator:
         """"""
         bg: BarGenerator = self.bar_generators.get(vt_symbol, None)
@@ -285,10 +450,11 @@ class RecorderEngine(BaseEngine):
 
         return bg
 
-    def subscribe(self, contract: ContractData) -> None:
+    def subscribe(self, contract: ContractData):
         """"""
-        req: SubscribeRequest = SubscribeRequest(
+        req = SubscribeRequest(
             symbol=contract.symbol,
             exchange=contract.exchange
         )
+        self.write_log(f"发出订阅 {contract.vt_symbol} 请求")
         self.main_engine.subscribe(req, contract.gateway_name)
