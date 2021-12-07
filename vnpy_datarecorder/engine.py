@@ -136,28 +136,29 @@ class DataRecorderEngine(BaseEngine):
                 task_type, data = task
 
                 try:
-                    self.write_log(data)
+                    self.write_log(f"Get data: {len(data)}")
+                    # self.write_log(data)
                 except Exception as e:
                     print(e)
 
                 if task_type == "tick":
                     self.database_manager.save_tick_data(data)
-                    self.write_log(data)
+                    # self.write_log(data)
                 elif task_type == "bar":
                     self.database_manager.save_bar_data(data)
-                    self.write_log(data)
+                    # self.write_log(data)
                 elif task_type == "order":
                     self.database_manager.save_order_data(data)
-                    self.write_log(data)
+                    # self.write_log(data)
                 elif task_type == "trade":
                     self.database_manager.save_trade_data(data)
-                    self.write_log(data)
+                    # self.write_log(data)
                 elif task_type == "position":
                     self.database_manager.save_position_data(data)
-                    self.write_log(data)
+                    # self.write_log(data)
                 elif task_type == "account":
                     self.database_manager.save_account_data(data)
-                    self.write_log(data)
+                    # self.write_log(data)
                 else:
                     raise ValueError(f"unknown task_type: {task_type}")
 
