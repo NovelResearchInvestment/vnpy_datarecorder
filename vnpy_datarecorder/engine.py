@@ -163,7 +163,6 @@ class DataRecorderEngine(BaseEngine):
                     raise ValueError(f"unknown task_type: {task_type}")
 
             except Empty:
-                print()
                 self.write_log(f"Thread queue is waiting...[{self.queue.qsize()}, {self.active}, {self.thread.is_alive()}, {self.thread._is_stopped}]")
                 continue
                 # if self.active and self.thread.is_alive():
